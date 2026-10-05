@@ -1,0 +1,10 @@
+# dependencies (dev-only: react/react-dom for the render harness)
+node_modules/
+
+# generated preview artifacts from the browser tests
+dev/preview-*.png
+
+# os / editor junk
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,60 @@
+{
+  "name": "dsh-style-gallery",
+  "version": "1.0.0",
+  "description": "Hand-drawn style gallery for DeepSeek Harness — browse 288 numbered art styles with real preview images, copy the ready-to-use prompt in one click, and send it straight into the composer. · 手绘风格图库：看真图选风格，一键复制提示词，直接拿去创作。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vonyung/dsh-style-gallery.git"
+  },
+  "homepage": "https://github.com/vonyung/dsh-style-gallery#readme",
+  "bugs": {
+    "url": "https://github.com/vonyung/dsh-style-gallery/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "style-gallery",
+    "handraw"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "assets",
+    "data",
+    "cordis.patch.yml",
+    "LICENSE",
+    "README.md"
+  ],
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

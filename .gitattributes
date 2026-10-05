@@ -1,0 +1,8 @@
+# Normalise line endings so the plugin behaves the same for everyone.
+* text=auto eol=lf
+
+# Binary assets — never touch these.
+*.webp binary
+*.png binary
+*.jpg binary
+*.ico binary
