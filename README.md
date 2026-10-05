@@ -229,16 +229,22 @@ node dev/preview-server.mjs          # → http://127.0.0.1:3088/
 这种情况下可以把整个图库**打包成一个自包含 HTML**：288 张预览图全部内嵌成
 `data:` URI，零外链，单文件双击就能看，也能丢进任何只托管单个 HTML 的预览面板。
 
+**产物落在 WorkBuddy 的技能目录里**（那是唯一的家，别在别处再放一份）：
+
 ```bash
-python dev/build_workbuddy_html.py . ../风格图库-workbuddy/风格图库.html 80 512
-#                                  ↑源目录  ↑输出           ↑webp质量 ↑长边封顶
+python dev/build_workbuddy_html.py . \
+  "C:/Users/19980/.workbuddy-ai/skills/handraw-gallery/风格图库.html" 80 512
+#                                     ↑输出              ↑webp质量 ↑长边封顶
 ```
+
+装好之后在 WorkBuddy 里说一句「**打开风格图库**」就能调出来
+（技能 `handraw-gallery` 负责这件事）。
 
 实测（288 张）：`512/q80` ≈ **7.5MB**。想更小就压长边，`384/q80` ≈ 6.2MB。
 
 ```bash
 python dev/measure_sizes.py .        # 换参数前先量一遍，别凭感觉
-node   dev/test-workbuddy-html.cjs   # 无头 Chrome 跑 32 项断言
+node   dev/test-workbuddy-html.cjs   # 无头 Chrome 跑 35 项断言
 ```
 
 这个导出里有个容易踩的坑：**主题色不是风格的属性**。`catalog.json` 的
