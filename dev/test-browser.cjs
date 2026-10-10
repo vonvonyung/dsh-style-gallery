@@ -304,6 +304,18 @@ function connect(wsUrl) {
     theme.found && theme.cls.indexOf('dsg-input') === -1 && theme.h < 160, theme.h + 'px tall')
   ok('the theme box can be dragged taller', theme.found && theme.resize === 'vertical', theme.resize)
 
+  // The detail modal is the only place the theme textarea is on screen, so
+  // capture it here — a diff of the rendered box is easier to trust than a
+  // class name in an assertion.
+  await cdp.send('Runtime.evaluate', { expression: `(() => {
+    const el = document.querySelector('.dsg-wrap .dsg-theme');
+    if (el) el.scrollIntoView({ block: 'center' });
+    return !!el;
+  })()` })
+  await sleep(350)
+  const modalShot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+  fs.writeFileSync(path.join(__dirname, 'preview-theme-box.png'), Buffer.from(modalShot.data, 'base64'))
+
   /* ---- "Use it" must actually reach the composer ------------------------ *
    * The gallery is root-scoped and never receives `inputActions`; it writes
    * the draft through the bridge the launcher publishes on `window`. This is
