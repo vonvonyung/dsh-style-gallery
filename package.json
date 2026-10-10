@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vonyung/dsh-style-gallery.git"
+    "url": "git+https://github.com/vonvonyung/dsh-style-gallery.git"
   },
-  "homepage": "https://github.com/vonyung/dsh-style-gallery#readme",
+  "homepage": "https://github.com/vonvonyung/dsh-style-gallery#readme",
   "bugs": {
-    "url": "https://github.com/vonyung/dsh-style-gallery/issues"
+    "url": "https://github.com/vonvonyung/dsh-style-gallery/issues"
   },
   "engines": {
     "node": ">=18"

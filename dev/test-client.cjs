@@ -158,6 +158,30 @@ const licenceText = fs.readFileSync(path.join(root, 'LICENSE'), 'utf8')
 ok('LICENSE carries the upstream attribution notice',
   /yang0\/handraw-style/.test(licenceText), 'attribution present in LICENSE')
 
+/* ---- publish metadata: package.json must point where the code is pushed ---- */
+// Users install this straight from GitHub, so a stale owner in package.json
+// sends them to a 404. Compare against the real remote rather than hardcoding
+// the owner, and skip the comparison when there is no clone to ask.
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+const slug = (u) => {
+  // trailing .git / #readme / /issues must not become part of the repo name
+  const m = /github\.com[/:]([^/]+)\/([^/#]+?)(?:\.git)?(?:[#/].*)?$/i.exec(u || '')
+  return m ? (m[1] + '/' + m[2]).toLowerCase() : ''
+}
+const pkgSlug = slug(pkg.repository && pkg.repository.url)
+let remoteSlug = ''
+const gitConfig = path.join(root, '.git', 'config')
+if (fs.existsSync(gitConfig)) {
+  const m = /^\s*url\s*=\s*(\S+)/m.exec(fs.readFileSync(gitConfig, 'utf8'))
+  if (m) remoteSlug = slug(m[1])
+}
+ok('package.json repository matches the git remote',
+  !remoteSlug || pkgSlug === remoteSlug,
+  'package.json=' + (pkgSlug || 'none') + ' remote=' + (remoteSlug || 'none'))
+ok('package.json homepage and bugs point at the same repository',
+  slug(pkg.homepage) === pkgSlug && slug(pkg.bugs && pkg.bugs.url) === pkgSlug,
+  pkgSlug || 'none')
+
 /* ---- report ---- */
 let failed = 0
 for (const c of checks) {

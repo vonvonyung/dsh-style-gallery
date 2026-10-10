@@ -11,6 +11,7 @@
  * styles, so a colour filter would silently return 0 cards for every colour.
  *
  * Usage: node dev/test-workbuddy-html.cjs [path/to/风格图库.html]
+ *        or set DSG_HTML to the same path.
  */
 const { spawn } = require('child_process')
 const http = require('http')
@@ -20,7 +21,19 @@ const { pathToFileURL } = require('url')
 
 const CHROME = 'C:/Users/19980/AppData/Local/ms-playwright/chromium-1243/chrome-win64/chrome.exe'
 const ROOT = path.join(__dirname, '..')
-const HTML = path.resolve(process.argv[2] || path.join(ROOT, '..', '风格图库-workbuddy', '风格图库.html'))
+// The gallery's canonical home is the handraw-gallery WorkBuddy skill; this
+// repo only holds the builder. Pass the path, or set DSG_HTML.
+const HTML = path.resolve(
+  process.argv[2] || process.env.DSG_HTML || path.join(ROOT, '..', '风格图库-workbuddy', '风格图库.html'),
+)
+if (!fs.existsSync(HTML)) {
+  // Fail loudly: a missing file otherwise surfaces as a cryptic page error and
+  // reads like a broken gallery.
+  console.error('gallery HTML not found: ' + HTML)
+  console.error('Pass it explicitly, e.g.:')
+  console.error('  node dev/test-workbuddy-html.cjs "%USERPROFILE%/.workbuddy-ai/skills/handraw-gallery/风格图库.html"')
+  process.exit(2)
+}
 const PAGE_URL = pathToFileURL(HTML).href
 const OUT = path.join(__dirname, 'preview-workbuddy.png')
 const CDP_PORT = Number(process.env.DSG_CDP_PORT || 9444)

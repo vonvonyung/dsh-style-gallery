@@ -31,7 +31,54 @@
 
 ## 安装
 
-### 第一步：找到你的 dsh profile 目录
+有两种方式。**桌面版只能用第一种** —— 它的 profile 由应用独占管理，命令行会被直接拒绝：
+
+```
+$ dsh plugin --profile desktop add ...
+error: profile "desktop" is managed exclusively by the Electron application
+```
+
+---
+
+### 方式一：从 DSH 界面安装（推荐）
+
+**先注意一件事：DSH 不接受 `.zip`。** 它认的安装来源只有四种：
+
+| 来源 | 写法 |
+| --- | --- |
+| 注册表包名 | `some-pkg` 或 `some-pkg@1.2.3` |
+| Git 地址 | `github:owner/repo`、`https://github.com/owner/repo.git` |
+| 压缩包 | `*.tgz` / `*.tar.gz` 的**绝对路径** |
+| 本地目录 | 指向插件目录的**绝对路径** |
+
+所以 zip 要先转成 tgz：
+
+```bash
+cd dsh-style-gallery
+npm pack --pack-destination ..
+# → dsh-style-gallery-1.0.0.tgz（9.9MB / 295 个文件）
+```
+
+然后在 DSH 里：
+
+1. 侧边栏 → **插件**
+2. 点 **添加插件**
+3. 粘贴 tgz 的**绝对路径**，例如 `C:\Users\you\dsh-style-gallery-1.0.0.tgz`
+   （必须是绝对路径 —— 相对路径会被拒，因为 Host 的工作目录对你不透明）
+4. 点 **安装**，装完点 **立即启用**
+5. **完全退出 DSH 再打开**
+
+> 安装前 DSH 会先读一遍 spec 指向什么，并检查两件事：它是个包、且**声明了组合包 patch**
+> （即 `package.json` 的 `dsh.bundle.patch`）。没有这一项会被拒为 `not-a-bundle`。
+> 本插件已声明，且**没有 `scripts`**，所以不会触发「依赖构建脚本」审批。
+
+> **升级要卸载后重装** —— DSH 不支持覆盖升级。旧版还在的话，先在插件页把它卸载。
+
+---
+
+### 方式二：手动放进 profile（任意版本通用）
+
+#### 第一步：找到你的 dsh profile 目录
 
 **这一步最容易错，请务必确认。** dsh 有好几种运行方式，profile 目录**各不相同**：
 
@@ -49,7 +96,7 @@ ls -lat ~/.dsh/profiles/
 
 **最近被创建或修改的那个，就是你在用的那个。**
 
-### 第二步：把插件放进 profile
+#### 第二步：把插件放进 profile
 
 **① 拷贝插件本体**
 
@@ -81,7 +128,7 @@ cp -r dsh-style-gallery <你的-profile-目录>/node_modules/
 > `bundles` 的顺序就是补丁的应用顺序，**把 `dsh-style-gallery` 放在 `dsh-web-app` 之后**。
 > 改之前建议先备份 `package.json`。
 
-### 第三步：重启 dsh
+#### 第三步：重启 dsh
 
 **必须完全退出再打开**：
 
@@ -148,12 +195,16 @@ dsh-style-gallery/
 
 ### 发布打包
 
+两种产物，内容相同，用途不同：
+
 ```bash
-python dev/pack.py                 # → ../dsh-style-gallery-1.0.0.zip（约 9.5MB）
+python dev/pack.py                 # → ../dsh-style-gallery-1.0.0.zip   给人手动拷贝
+npm pack --pack-destination ..     # → ../dsh-style-gallery-1.0.0.tgz   给 DSH 界面安装
 ```
 
-白名单式打包（`client.js` + `package.json` + `cordis.patch.yml` + `LICENSE` +
-`README.md` + `lib/` + `assets/` + `data/`），`dev/` 与 `node_modules/` 一律不进包，
+**zip 是给人看的，tgz 是给 DSH 装的** —— DSH 的插件页只接受 `.tgz` / `.tar.gz`，
+zip 递进去会被判为无效 spec。两者都是 295 个文件，`npm pack` 与 `dev/pack.py`
+都按 `package.json` 的 `files` 白名单收口，`dev/` 与 `node_modules/` 一律不进包，
 并且会拦掉 `.bak-*` 这类就地生成的备份残渣 —— 少图/多文件这类回归肉眼看不出来。
 
 ### 为什么分两个半区
