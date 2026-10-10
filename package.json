@@ -1,7 +1,7 @@
 {
   "name": "dsh-style-gallery",
   "version": "1.0.0",
-  "description": "Hand-drawn style gallery for DeepSeek Harness — browse 288 numbered art styles with real preview images, copy the ready-to-use prompt in one click, and send it straight into the composer. · 手绘风格图库：看真图选风格，一键复制提示词，直接拿去创作。",
+  "description": "Hand-drawn style gallery for DeepSeek Harness — browse 327 numbered art styles and 166 layouts with real preview images, copy the ready-to-use prompt in one click, and send it straight into the composer. · 手绘风格图库：327 种风格 + 166 种版式，看真图选风格，一键复制提示词，直接拿去创作。",
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",

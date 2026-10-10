@@ -61,7 +61,8 @@ function connect(u) {
 
   ok('popup opened with style cards', popup.cards > 0, popup.cards + ' cards')
   ok('popup thumbnails occupy real space', popup.painted > 0, popup.painted + ' painted')
-  ok('popup card shows id + name', /^[A-Z]{2}-\d{3}/.test(popup.first || ''), popup.first)
+  // Cards are labelled with the legacy number the library's own docs use.
+  ok('popup card shows id + name', /^#\d{3}\s+\S/.test(popup.first || ''), popup.first)
 
   // click the first style → should push the prompt into setDraft
   await cdp.send('Runtime.evaluate', { expression: "document.querySelector('.dsg-pop-card').click(); true", returnByValue: true })
@@ -70,8 +71,14 @@ function connect(u) {
   const seen = (await cdp.send('Runtime.evaluate', { returnByValue: true, expression: "String(window.__draftSeen||'')" })).result.value
   ok('setDraft received a non-empty prompt', typeof seen === 'string' && seen.length > 40, seen.length + ' chars')
   ok('the prompt mentions the chosen style', seen.indexOf('Playful Deadpan Doodle') !== -1, seen.slice(0, 120))
-  ok('the prompt forbids text/watermark in the art', seen.indexOf('不要出现任何文字') !== -1)
+  // The upstream contract is what the prompt has to look like now.
+  ok('the prompt opens with 风格名称：', seen.indexOf('风格名称：') === 0, seen.split('\n')[0])
+  ok('the prompt carries the theme placeholder rather than stopping to ask',
+    seen.indexOf('【请在此输入画面主题') !== -1, 'placeholder present')
+  ok('the prompt appends no generic tail',
+    seen.indexOf('不要出现任何文字') === -1 && seen.indexOf('构图完整') === -1)
   ok('the prompt does NOT leak the style id', seen.indexOf('FA-001') === -1, seen.indexOf('FA-001') !== -1 ? 'leaked' : 'clean')
+  ok('the prompt does NOT leak any #nnn id', !/#\d{3}/.test(seen), (seen.match(/#\d{3}/) || ['none'])[0])
 
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
   fs.writeFileSync(path.join(__dirname, 'preview-launcher.png'), Buffer.from(shot.data, 'base64'))

@@ -165,15 +165,15 @@ function connect(wsUrl) {
     state && state.painted + '/' + state.imgs + ' painted')
   ok('thumbnail box has a real height', state && state.thumbH > 40,
     state && state.thumbW + 'x' + state.thumbH)
-  ok('at least one card shows a style id badge', state && /^[A-Z]{2}-\d{3}$/.test(state.badge || ''), state && state.badge)
+  ok('at least one card shows a style id badge', state && /^#\d{3}$/.test(state.badge || ''), state && state.badge)
   ok('first card has a style name', !!(state && state.first), state && state.first)
   ok('no uncaught console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 
   // The grid uses native lazy-loading and is its own scroll container
   // (.dsg-grid{overflow:auto}), so window.scrollTo does nothing — the element
-  // must be scrolled. Step it through and require that every one of the 288
-  // previews loads and paints; the "loaded but collapsed" bug can hide below
-  // the fold otherwise.
+  // must be scrolled. Step it through and require that every preview loads and
+  // paints; the "loaded but collapsed" bug can hide below the fold otherwise.
+  // The `cards > 0` guard matters: without it a totally blank page passes.
   await cdp.send('Runtime.evaluate', { expression: `(async () => {
     const grid = document.querySelector('.dsg-grid');
     if (!grid) return 'no-grid';
@@ -185,25 +185,62 @@ function connect(wsUrl) {
     grid.scrollTop = 0;
     return 'ok';
   })()`, awaitPromise: true })
-  await sleep(2000)
+  await sleep(2500)
   const full = JSON.parse((await cdp.send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.value)
-  ok('all 288 previews load after a full scroll', full.loaded === full.cards,
+  ok('every style preview loads after a full scroll',
+    full.cards > 0 && full.loaded === full.cards,
     full.loaded + '/' + full.cards + ' loaded')
-  ok('all 288 previews paint after a full scroll', full.painted === full.cards,
+  ok('every style preview paints after a full scroll',
+    full.cards > 0 && full.painted === full.cards,
     full.painted + '/' + full.cards + ' painted')
 
   // exercise a real interaction: type in the search box, confirm filtering
-  await cdp.send('Runtime.evaluate', { expression: `(() => {
+  const typeSearch = (value) => cdp.send('Runtime.evaluate', { expression: `(() => {
     const input = document.querySelector('.dsg-wrap .dsg-input');
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    setter.call(input, 'FH-014');
+    setter.call(input, ${JSON.stringify(value)});
     input.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()` })
+
+  await typeSearch('FH-014')
   await sleep(500)
   const after = JSON.parse((await cdp.send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.value)
   ok('search filters the grid', after.cards > 0 && after.cards < state.cards,
     state.cards + ' → ' + after.cards)
+
+  // The library's own docs index styles by the legacy 001-327 number, so
+  // searching `041` has to find FB-006 rather than nothing.
+  await typeSearch('041')
+  await sleep(500)
+  const legacy = JSON.parse((await cdp.send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.value)
+  ok('searching a legacy number finds its style', legacy.cards > 0 && legacy.cards < state.cards,
+    '041 → ' + legacy.cards + ' cards, first badge ' + legacy.badge)
+  ok('the legacy hit is the right style', legacy.badge === '#041', legacy.badge)
+
+  // The layouts tab is a whole second library (166 entries) behind one click;
+  // if it ever fails to mount, the tab is a dead end.
+  await cdp.send('Runtime.evaluate', { expression: `(() => {
+    const tabs = document.querySelectorAll('.dsg-tab');
+    if (tabs[1]) tabs[1].click();
+    return tabs.length;
+  })()` })
+  await sleep(1200)
+  const lay = JSON.parse((await cdp.send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.value)
+  ok('the layouts tab renders layout cards', lay.cards > 0, lay.cards + ' layout cards')
+  ok('layout cards load their previews', lay.loaded > 0, lay.loaded + '/' + lay.imgs + ' loaded')
+  ok('layout cards badge with their layout id',
+    /^[A-Z]{2}-\d{3}$/.test(
+      (await cdp.send('Runtime.evaluate', { expression: `(document.querySelector('.dsg-badge')||{}).textContent||''`, returnByValue: true })).result.value || '',
+    ), 'layout id badge')
+
+  // back to styles for the colour-chip assertions below
+  await cdp.send('Runtime.evaluate', { expression: `(() => {
+    const tabs = document.querySelectorAll('.dsg-tab');
+    if (tabs[0]) tabs[0].click();
+    return true;
+  })()` })
+  await sleep(600)
 
   // Theme-colour chips must be painted in the colour they name, with a label
   // that stays legible on top. The palette comes from catalog.json (colors[].hex).

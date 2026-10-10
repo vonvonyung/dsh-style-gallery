@@ -56,11 +56,31 @@ def main() -> int:
             if p.is_file() and not is_junk(p.name):
                 entries.append((p, "dsh-style-gallery/" + p.relative_to(root).as_posix()))
 
-    # 白名单 + junk 过滤之后，assets 必须一张不少 —— 少图是最难被发现的回归
-    n_assets = sum(1 for _, arc in entries if arc.startswith("dsh-style-gallery/assets/"))
+    # 白名单 + junk 过滤之后，每个类别的图必须一张不少 —— 少图是最难被发现的回归。
+    # `assets/` 是五个子目录，各自的数量都由 catalog 决定，所以要逐类对账，
+    # 不能用总数（早期版本只有一个扁平的 assets/，用总数是够的，现在不够了）。
     catalog = json.loads((root / "data" / "catalog.json").read_text("utf-8"))
-    if n_assets != len(catalog["styles"]):
-        print("  assets 数量与 catalog 不一致: %d vs %d" % (n_assets, len(catalog["styles"])))
+    expected = {
+        # 单图 + 垫图
+        "styles": len(catalog["styles"]) + sum(1 for s in catalog["styles"] if s.get("grid")),
+        "layouts": len(catalog["layouts"]),
+        # 色块 + 拼图
+        "colors": len(catalog["colors"]) + len(catalog.get("colorSheets", [])),
+        "groups": len(catalog.get("groupSheets", [])),
+    }
+    bad = []
+    for kind, want in sorted(expected.items()):
+        got = sum(1 for _, arc in entries if arc.startswith(f"dsh-style-gallery/assets/{kind}/"))
+        if got != want:
+            bad.append(f"{kind}: {got} on disk vs {want} in catalog")
+    # characters 是上游的自建图库样本，没有对应的 catalog 条目，只要求非空。
+    n_chars = sum(1 for _, arc in entries if arc.startswith("dsh-style-gallery/assets/characters/"))
+    if not n_chars:
+        bad.append("characters: none packaged")
+    if bad:
+        print("  assets 与 catalog 不一致:")
+        for b in bad:
+            print("   ", b)
         return 1
 
     if out.exists():

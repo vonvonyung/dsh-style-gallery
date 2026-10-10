@@ -6,9 +6,13 @@
  * it. Everything must therefore be self-contained — if any image failed to get
  * inlined as a data URI this run will show it as "loaded < cards".
  *
- * The regression this file exists to guard: theme colour is a *prompt
- * parameter*, not a style attribute. The catalog has no `color` field on
- * styles, so a colour filter would silently return 0 cards for every colour.
+ * Two regressions this file exists to guard:
+ *   1. Theme colour is a *prompt parameter*, not a style attribute. The catalog
+ *      has no `color` field on styles, so a colour filter would silently return
+ *      0 cards for every colour.
+ *   2. The page used to carry its own copy of the prompt builder, which drifted
+ *      from the dsh plugin's. It now inlines the plugin's @prompt-core block at
+ *      build time, so this run also proves the inline actually happened.
  *
  * Usage: node dev/test-workbuddy-html.cjs [path/to/风格图库.html]
  *        or set DSG_HTML to the same path.
@@ -37,6 +41,10 @@ if (!fs.existsSync(HTML)) {
 const PAGE_URL = pathToFileURL(HTML).href
 const OUT = path.join(__dirname, 'preview-workbuddy.png')
 const CDP_PORT = Number(process.env.DSG_CDP_PORT || 9444)
+
+const CATALOG = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'catalog.json'), 'utf8'))
+/** The first card in the grid is always the first catalog entry. */
+const S0_NAME = CATALOG.styles[0].name
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -110,13 +118,24 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
   return r.result.value
 }
 
+const setInput = (id, value) => `(() => {
+  const i = document.getElementById(${JSON.stringify(id)});
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  set.call(i, ${JSON.stringify(value)});
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+})()`
+
+const clickTab = (name) => `document.getElementById('tab-' + ${JSON.stringify(name)}).click()`
+
 ;(async () => {
   const checks = []
   const ok = (l, c, e) => checks.push({ l, pass: !!c, e })
 
   ok('single-file html exists', fs.existsSync(HTML), HTML)
   const sizeMB = fs.existsSync(HTML) ? fs.statSync(HTML).size / 1048576 : 0
-  ok('html is a self-contained bundle (<12MB)', sizeMB > 1 && sizeMB < 12, sizeMB.toFixed(2) + ' MB')
+  // 594 images inlined. A big jump here means the encoder lost its downscaling.
+  ok('html is a self-contained bundle (<26MB)', sizeMB > 5 && sizeMB < 26, sizeMB.toFixed(2) + ' MB')
   ok('chromium binary exists', fs.existsSync(CHROME), CHROME)
 
   const profileDir = path.join(require('os').tmpdir(), 'dsg-wb-' + Date.now())
@@ -157,24 +176,37 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
   await cdp.send('Page.navigate', { url: PAGE_URL })
 
   let state = null
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 100; i++) {
     try {
       state = JSON.parse(await evalJs(cdp, PROBE))
       if (state.cards > 0 && state.loaded > 0) break
-    } catch { /* page still parsing a 7MB document */ }
+    } catch { /* page still parsing a ~19MB document */ }
     await sleep(400)
   }
 
-  ok('all 288 style cards rendered', state && state.cards === 288, state && state.cards + ' cards')
+  ok('all 327 style cards rendered', state && state.cards === 327, state && state.cards + ' cards')
   ok('group chips rendered (8 groups + 全部)', state && state.gchips === 9, state && state.gchips + ' chips')
   ok('colour chips rendered (36 + 不指定)', state && state.cchips === 37, state && state.cchips + ' chips')
-  ok('first card has a style id badge', state && /^[A-Z]{2}-\d{3}$/.test(state.badge || ''), state && state.badge)
+  // Cards are labelled with the legacy number the library's own docs use.
+  ok('first card has a style id badge', state && /^#\d{3}$/.test(state.badge || ''), state && state.badge)
   ok('first card has a style name', !!(state && state.first), state && state.first)
   ok('no uncaught console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 
+  // The page must run the plugin's prompt code, not a stale copy of it.
+  ok('the page inlines the plugin prompt core',
+    await evalJs(cdp, `typeof stylePrompt === 'function' && typeof resolveActivation === 'function'`) === true)
+  ok('the inlined core is the current contract',
+    await evalJs(cdp, `typeof filterTraits === 'function' && filterTraits('白底；避免可爱微笑。')`) === '白底',
+    await evalJs(cdp, `typeof filterTraits === 'function' ? filterTraits('白底；避免可爱微笑。') : 'missing'`))
+  // `typeof prompt` is useless here — window.prompt is the browser's own. Check
+  // the built file instead: the old builder's opening line must be gone.
+  const htmlSrc = fs.readFileSync(HTML, 'utf8')
+  ok('the old builder is not still inlined',
+    htmlSrc.indexOf('请用【') === -1 && htmlSrc.indexOf('风格要点：') === -1,
+    htmlSrc.indexOf('请用【') !== -1 ? 'old builder present' : 'gone')
+
   // Scroll the whole grid so native lazy-loading fires for every thumbnail.
   await evalJs(cdp, `(async () => {
-    const g = document.getElementById('grid');
     for (let y = 0; y <= document.body.scrollHeight; y += 600) {
       window.scrollTo(0, y);
       await new Promise(r => requestAnimationFrame(r));
@@ -183,46 +215,41 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
     window.scrollTo(0, 0);
     return 'ok';
   })()`, true)
-  await sleep(2500)
+  await sleep(3000)
   const full = JSON.parse(await evalJs(cdp, PROBE))
-  ok('every preview image is inlined and loads', full.loaded === full.cards,
+  ok('every preview image is inlined and loads', full.cards > 0 && full.loaded === full.cards,
     full.loaded + '/' + full.cards + ' loaded')
-  ok('every preview image occupies real space', full.painted === full.cards,
+  ok('every preview image occupies real space', full.cards > 0 && full.painted === full.cards,
     full.painted + '/' + full.cards + ' painted')
 
   // --- search ---
-  await evalJs(cdp, `(() => {
-    const i = document.getElementById('q');
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    set.call(i, '蜡笔'); i.dispatchEvent(new Event('input', { bubbles: true })); return true;
-  })()`)
+  await evalJs(cdp, setInput('q', '蜡笔'))
   await sleep(400)
   const searched = JSON.parse(await evalJs(cdp, PROBE))
-  ok('search narrows the grid', searched.cards > 0 && searched.cards < 288,
-    '288 → ' + searched.cards)
+  ok('search narrows the grid', searched.cards > 0 && searched.cards < 327,
+    '327 → ' + searched.cards)
 
-  await evalJs(cdp, `(() => {
-    const i = document.getElementById('q');
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    set.call(i, 'FH-014'); i.dispatchEvent(new Event('input', { bubbles: true })); return true;
-  })()`)
+  await evalJs(cdp, setInput('q', 'FH-014'))
   await sleep(400)
   const byId = JSON.parse(await evalJs(cdp, PROBE))
   ok('search by style id finds exactly one', byId.cards === 1, byId.cards + ' card')
 
-  await evalJs(cdp, `(() => {
-    const i = document.getElementById('q');
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); return true;
-  })()`)
+  // Legacy numbering is what the library documents; `041` is FB-006.
+  await evalJs(cdp, setInput('q', '041'))
+  await sleep(400)
+  const byLegacy = JSON.parse(await evalJs(cdp, PROBE))
+  ok('search by legacy number finds its style', byLegacy.cards > 0, '041 → ' + byLegacy.cards + ' cards')
+  ok('the legacy hit is the right style', byLegacy.badge === '#041', byLegacy.badge)
+
+  await evalJs(cdp, setInput('q', ''))
   await sleep(400)
 
   // --- group filter ---
   await evalJs(cdp, `document.querySelectorAll('#gchips .chip')[1].click()`)
   await sleep(300)
   const grouped = JSON.parse(await evalJs(cdp, PROBE))
-  ok('group chip filters to that group only', grouped.cards > 0 && grouped.cards < 288,
-    '288 → ' + grouped.cards)
+  ok('group chip filters to that group only', grouped.cards > 0 && grouped.cards < 327,
+    '327 → ' + grouped.cards)
   ok('group chip marks itself active', await evalJs(cdp,
     `document.querySelectorAll('#gchips .chip')[1].classList.contains('on')`) === true)
   await evalJs(cdp, `document.querySelectorAll('#gchips .chip')[0].click()`)
@@ -233,16 +260,15 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
   await sleep(400)
   const coloured = JSON.parse(await evalJs(cdp, PROBE))
   ok('colour chip does NOT filter the grid (regression guard)',
-    coloured.cards === 288, coloured.cards + ' cards after picking a colour')
+    coloured.cards === 327, coloured.cards + ' cards after picking a colour')
   ok('colour chip marks itself active', await evalJs(cdp,
     `document.querySelectorAll('#cchips .chip')[1].classList.contains('on')`) === true)
   ok('count line announces the chosen colour', /主题色/.test(coloured.count), coloured.count)
 
   // --- colour chips must actually be painted in their own colour ---
-  // The palette lives in catalog.json (colors[].hex) so both the dsh plugin and
-  // this export stay in sync. A chip that renders as a flat grey means the hex
-  // never made it into the data, or the inline style lost to `.chip.on`.
   const swatches = JSON.parse(await evalJs(cdp, `(() => {
+    const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+    const lum = (h) => 0.2126*lin(parseInt(h.slice(1,3),16)/255) + 0.7152*lin(parseInt(h.slice(3,5),16)/255) + 0.0722*lin(parseInt(h.slice(5,7),16)/255);
     const chips = Array.from(document.querySelectorAll('#cchips .chip')).slice(1);
     const bgs = new Set();
     let minContrast = 99, worst = '', plain = 0;
@@ -258,10 +284,7 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
       const cr = (Math.max(a,c) + 0.05) / (Math.min(a,c) + 0.05);
       if (cr < minContrast) { minContrast = cr; worst = b.textContent + ' on ' + hex; }
     });
-    return JSON.stringify({
-      n: chips.length, distinct: bgs.size, plain,
-      minContrast: +minContrast.toFixed(2), worst,
-    });
+    return JSON.stringify({ n: chips.length, distinct: bgs.size, plain, minContrast: +minContrast.toFixed(2), worst });
   })()`))
   ok('all 36 colour chips are painted with a colour', swatches.n === 36 && swatches.plain === 0,
     swatches.n + ' chips, ' + swatches.plain + ' unpainted')
@@ -270,17 +293,21 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
   ok('chip label clears WCAG AA contrast (>= 4.5:1)', swatches.minContrast >= 4.5,
     swatches.minContrast + ':1  worst=' + swatches.worst)
 
-  // --- grid copy button: prompt must carry the colour, never the style id ---
-  const gridProbe = JSON.parse(await evalJs(cdp, `(() => {
+  // --- the prompt the grid button copies -------------------------------
+  const gridPrompt = await evalJs(cdp, `(() => {
     const s = S[0];
-    const c = byColor[st.c];
-    return JSON.stringify({ name: s.name, text: prompt(s, '', c || null) });
-  })()`))
-  const gridPrompt = gridProbe.text
+    return stylePrompt(s, '', byColor[st.c] || null, { catalog: DATA, lang: 'zh' });
+  })()`)
   ok('grid prompt carries the chosen theme colour', /主题色/.test(gridPrompt), gridPrompt.split('\n').pop())
   ok('grid prompt never leaks the style number', !/[A-Z]{2}-\d{3}/.test(gridPrompt),
     (gridPrompt.match(/[A-Z]{2}-\d{3}/) || ['none'])[0])
-  ok('grid prompt states the style name', gridPrompt.includes(gridProbe.name), gridProbe.name)
+  ok('grid prompt never leaks a #nnn id', !/#\d{3}/.test(gridPrompt),
+    (gridPrompt.match(/#\d{3}/) || ['none'])[0])
+  ok('grid prompt states the style name', gridPrompt.includes(S0_NAME), S0_NAME)
+  ok('grid prompt opens with 风格名称：', gridPrompt.indexOf('风格名称：') === 0, gridPrompt.split('\n')[0])
+  // The old builder appended this; the contract forbids it outright.
+  ok('grid prompt appends no generic tail',
+    gridPrompt.indexOf('构图完整') === -1 && gridPrompt.indexOf('不要出现任何文字') === -1)
 
   await evalJs(cdp, `document.querySelector('#grid .acts .btn.pri').click()`)
   await sleep(250)
@@ -290,23 +317,28 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
   // --- modal ---
   await evalJs(cdp, `document.querySelector('#grid .thumb').click()`)
   await sleep(300)
-  const modalOpen = await evalJs(cdp, `document.getElementById('mask').classList.contains('on')`)
-  ok('clicking a thumbnail opens the modal', modalOpen === true)
+  ok('clicking a thumbnail opens the modal',
+    await evalJs(cdp, `document.getElementById('mask').classList.contains('on')`) === true)
 
   const modalBefore = await evalJs(cdp, `document.getElementById('mtext').value`)
   ok('modal prompt is pre-filled', modalBefore.length > 20, modalBefore.length + ' chars')
   ok('modal prompt carries the theme colour', /主题色/.test(modalBefore))
 
-  await evalJs(cdp, `(() => {
-    const i = document.getElementById('mtheme');
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    set.call(i, '春天的第一杯奶茶'); i.dispatchEvent(new Event('input', { bubbles: true })); return true;
-  })()`)
+  await evalJs(cdp, setInput('mtheme', '春天的第一杯奶茶'))
   await sleep(300)
   const modalAfter = await evalJs(cdp, `document.getElementById('mtext').value`)
   ok('typing a subject rewrites the prompt', /春天的第一杯奶茶/.test(modalAfter) && modalAfter !== modalBefore)
   ok('modal prompt never leaks the style number', !/[A-Z]{2}-\d{3}/.test(modalAfter),
     (modalAfter.match(/[A-Z]{2}-\d{3}/) || ['none'])[0])
+
+  // --- language toggle ---
+  await evalJs(cdp, `document.querySelector('#mlang button[data-lang=en]').click()`)
+  await sleep(300)
+  const enPrompt = await evalJs(cdp, `document.getElementById('mtext').value`)
+  ok('the language toggle switches the prompt to English',
+    enPrompt.indexOf('Style name: ') === 0, enPrompt.split('\n')[0])
+  await evalJs(cdp, `document.querySelector('#mlang button[data-lang=zh]').click()`)
+  await sleep(250)
 
   // --- zoom toggle ---
   await evalJs(cdp, `document.getElementById('mimg').click()`)
@@ -324,6 +356,40 @@ const evalJs = async (cdp, expression, awaitPromise = false) => {
   await sleep(200)
   ok('close button dismisses the modal',
     await evalJs(cdp, `document.getElementById('mask').classList.contains('on')`) === false)
+
+  // --- layouts tab ------------------------------------------------------
+  await evalJs(cdp, clickTab('layouts'))
+  await sleep(1500)
+  const lay = JSON.parse(await evalJs(cdp, PROBE))
+  ok('the layouts tab renders all 166 layouts', lay.cards === 166, lay.cards + ' layout cards')
+  ok('layout cards badge with their layout id', /^[A-Z]{2}-\d{3}$/.test(lay.badge || ''), lay.badge)
+  ok('layout category chips rendered', lay.gchips === 6, lay.gchips + ' chips')
+  ok('the colour row is hidden on the layouts tab',
+    await evalJs(cdp, `getComputedStyle(document.getElementById('colorBlock')).display`) === 'none')
+
+  // --- contact sheets tab ----------------------------------------------
+  await evalJs(cdp, clickTab('sheets'))
+  await sleep(1200)
+  const sheets = JSON.parse(await evalJs(cdp, PROBE))
+  ok('the overview tab renders all 23 contact sheets', sheets.cards === 23, sheets.cards + ' sheets')
+  ok('contact sheet badges show the legacy range',
+    /^[A-H] · \d{3}–\d{3}$/.test(sheets.badge || ''), sheets.badge)
+  ok('the search box is hidden on the overview tab',
+    await evalJs(cdp, `getComputedStyle(document.getElementById('q')).display`) === 'none')
+  ok('contact sheet images load from their inlined data URIs',
+    sheets.loaded > 0, sheets.loaded + '/' + sheets.imgs + ' loaded')
+
+  await evalJs(cdp, `document.querySelector('#grid .thumb').click()`)
+  await sleep(300)
+  ok('a contact sheet opens in the modal',
+    await evalJs(cdp, `document.getElementById('mask').classList.contains('on')`) === true)
+  ok('the sheet modal hides the prompt controls',
+    await evalJs(cdp, `getComputedStyle(document.getElementById('mcopy')).display`) === 'none')
+  await evalJs(cdp, `document.getElementById('mx').click()`)
+  await sleep(200)
+
+  await evalJs(cdp, clickTab('styles'))
+  await sleep(800)
 
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
   fs.writeFileSync(OUT, Buffer.from(shot.data, 'base64'))

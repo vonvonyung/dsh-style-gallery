@@ -120,24 +120,38 @@ ok('group labels match expected Chinese names',
 
 // The thumbnail URL the component builds must match a file the host serves.
 const sample = catalog.styles[13] // FA-014
-const expectedUrl = '/dsh-style-gallery/preview/' + sample.number + '.webp'
+const expectedUrl = '/dsh-style-gallery/preview/styles/' + sample.number + '.webp'
 ok('thumbnail URL shape is correct for FA-014',
-  expectedUrl === '/dsh-style-gallery/preview/FA-014.webp', expectedUrl)
-ok('that asset exists on disk', fs.existsSync(path.join(root, 'assets', sample.number + '.webp')))
+  expectedUrl === '/dsh-style-gallery/preview/styles/FA-014.webp', expectedUrl)
+ok('that asset exists on disk', fs.existsSync(path.join(root, 'assets', 'styles', sample.number + '.webp')))
+ok('layout thumbnails use their own kind segment',
+  fs.existsSync(path.join(root, 'assets', 'layouts', catalog.layouts[0].id + '.webp')),
+  catalog.layouts[0].id)
 
-// Prompt builder contract: the style id must never appear in prompt text.
-// Verified here by checking the source honours the rule (no number injection).
-const src = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
-const stylePromptBody = src.slice(src.indexOf('function stylePrompt'), src.indexOf('function copyText'))
-ok('prompt builder exists', stylePromptBody.length > 0)
+/* ---- prompt builder contract -------------------------------------------
+ * Asserted by calling the real function, not by grepping the source: the old
+ * version of this harness sliced client.js between two function names, which
+ * silently stopped meaning anything the moment the file was reordered. */
+const I = mod.__internals
+ok('prompt builder is exposed', I && typeof I.stylePrompt === 'function')
+
+const strong = catalog.styles.filter((s) => I.resolveActivation(catalog, s).source === 'name+style')[0]
+const built = I.stylePrompt(strong, '一只猫', null, { catalog, lang: 'zh' })
 ok('prompt builder does NOT inject the style number',
-  stylePromptBody.indexOf('style.number') === -1, 'mentions style.number')
+  built.indexOf(strong.number) === -1 && !/#\d{3}/.test(built), built.split('\n')[0])
 ok('prompt builder includes the style name',
-  stylePromptBody.indexOf('style.name') !== -1)
-ok('prompt builder includes traits',
-  stylePromptBody.indexOf('traits') !== -1)
-ok('prompt builder forbids text/watermark in the art',
-  stylePromptBody.indexOf('不要出现任何文字') !== -1)
+  built.indexOf(strong.name) !== -1)
+ok('prompt builder carries the theme',
+  built.indexOf('主题：一只猫') !== -1)
+// The contract forbids appending anything generic; the old builder did.
+ok('prompt builder appends no generic tail',
+  built.indexOf('构图完整') === -1 && built.indexOf('不要出现任何文字') === -1)
+
+const traitsStyle = catalog.styles.filter((s) => I.resolveActivation(catalog, s).useTraits)[0]
+ok('prompt builder includes filtered traits when activation calls for them',
+  I.stylePrompt(traitsStyle, '主题', null, { catalog, lang: 'zh' }).indexOf('核心风格特征：') !== -1)
+ok('prompt builder filters negative clauses out of traits',
+  I.filterTraits('白底；避免可爱微笑。').indexOf('避免') === -1)
 
 let failed = 0
 for (const c of checks) { if (!c.pass) failed++; console.log((c.pass ? 'PASS ' : 'FAIL ') + c.l + (c.e !== undefined ? '  [' + c.e + ']' : '')) }
