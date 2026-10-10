@@ -485,7 +485,7 @@ fatal: unable to access 'https://github.com/vonvonyung/dsh-style-gallery.git/':
 CONNECT tunnel failed, response 502
 ```
 
-`dev/` 下三个脚本处理这种情况，走 Git Data API 而不是 git 传输：
+`dev/` 下四个脚本处理这种情况，走 Git Data API 而不是 git 传输：
 
 ```bash
 PY="C:/Users/19980/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe"
@@ -494,6 +494,8 @@ PY="C:/Users/19980/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe
 "$PY" dev/normalize-commit-dates.py --apply    # 把日期写成 UTC
 "$PY" dev/push-via-api.py --recon              # 看要传多少对象
 "$PY" dev/push-via-api.py --apply              # 真推
+"$PY" dev/tag-via-api.py --recon               # 看标签差异
+"$PY" dev/tag-via-api.py --apply --force       # 建新标签 / 移动旧标签
 ```
 
 **为什么必须先归一化日期**：GitHub 的 `POST /git/commits` 只接受 ISO 8601，
@@ -516,6 +518,15 @@ API : author vonyung <…> 1791177995 +0000
 - **只允许快进**。远程不是本地祖先就直接拒绝，force 不该由脚本替你决定。
 - **可续传**。blob 上传记录在 `dev/.push-cache-<branch>.json`（已 gitignore），
   中断后重跑不重复传。
+
+`tag-via-api.py` 推标签（`git push --tags` 同样被代理挡），直接复用上面的凭据与
+`api()`，不另起一套：
+
+- **默认只创建、不移动**。远程标签指向不同时只列出来；移动一个已发布的标签是在
+  改写别人可能已引用的标记，得显式给 `--force`。
+- **只支持轻量标签**。附注标签在远程是一个独立的 tag 对象，必须先 `POST /git/tags`
+  建对象再让 ref 指向它；脚本遇到附注标签会明确拒绝，而不是建一个遮蔽它的轻量 ref。
+- **写完读回验证**。`PATCH` 返回 200 不等于目标就是你要的那个 SHA。
 
 只诊断不修：`python dev/diagnose-commit-sha.py [commit]` 会把本地对象与 API 建出来的
 对象逐字段摆在一起，直接指出差在哪一项。
