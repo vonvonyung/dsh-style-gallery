@@ -424,6 +424,31 @@ ok('a traits-activation prompt carries 核心风格特征',
 ok('the traits line contains no negative clause',
   !/(?:避免|不要|不准|禁止)/.test(pTraits.split('\n').filter((l) => l.indexOf('核心风格特征：') === 0)[0] || ''))
 
+/* Field order must match the library's own scripts/prompt_style.py, which the
+   contract summarises as: 风格名称 → 主题色 → 主题 → 参考作者 → 核心风格特征.
+   A correct set of fields in the wrong order still reads as a different prompt
+   to anyone who compares against the upstream output, so pin the order down. */
+const orderColor = cat.colors.filter((c) => c.id === 'C-10')[0]
+const pOrdered = I.stylePrompt(withTraits[0], '一只猫在窗台', orderColor, { catalog: cat, lang: 'zh' })
+const at = (needle) => pOrdered.indexOf(needle)
+ok('the prompt places 主题色 after 风格名称',
+  at('风格名称：') === 0 && at('主题色：') !== -1 && at('主题色：') > at('风格名称：'),
+  pOrdered.split('\n').slice(0, 3).join(' | '))
+ok('the prompt places 主题 after 主题色',
+  at('主题：') !== -1 && at('主题：') > at('主题色：'), pOrdered.split('\n').slice(0, 4).join(' | '))
+ok('the prompt places 参考作者/风格名称 after 主题', at('主题：') < at('参考作者/风格名称：'))
+ok('the prompt places 核心风格特征 last', at('参考作者/风格名称：') < at('核心风格特征：'))
+
+/* Upstream closes the theme clause with a full stop — but only once. */
+ok('the theme clause is closed with a full stop',
+  pOrdered.indexOf('主题：一只猫在窗台。') !== -1,
+  pOrdered.split('\n').filter((l) => l.indexOf('主题：') === 0)[0])
+const pDotted = I.stylePrompt(withTraits[0], '一只猫在窗台。', null, { catalog: cat, lang: 'zh' })
+ok('a theme that already ends in a stop is not doubled',
+  pDotted.indexOf('一只猫在窗台。。') === -1 && pDotted.indexOf('主题：一只猫在窗台。') !== -1)
+ok('the English prompt closes the theme with an ASCII full stop',
+  I.stylePrompt(fa001, 'a cat', null, { catalog: cat, lang: 'en' }).indexOf('Theme: a cat.') !== -1)
+
 /* layouts: graphic-text mode stacks the layout prompt and the fixed suffix */
 const layout = cat.layouts.filter((x) => x.category === 'social-card')[0]
 const pLayout = I.stylePrompt(fa001, '主题', null, { catalog: cat, lang: 'zh', layout })

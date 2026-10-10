@@ -7,6 +7,9 @@ dev/preview-*.png
 # resume state for dev/push-via-api.py (lists blobs already uploaded)
 dev/.push-cache-*.json
 
+# npm pack output: a build artifact, rebuild it with `npm pack`
+*.tgz
+
 # os / editor junk
 .DS_Store
 Thumbs.db

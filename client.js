@@ -258,6 +258,16 @@ window.__ModuleLoader__.load({
     const THEME_PLACEHOLDER_EN = '[Enter theme here, or attach your photo in the image AI]'
 
     /**
+     * Upstream closes the theme clause with a full stop (`主题：{theme}。` /
+     * `Theme: {theme}.`). Mirror that, but never double a stop the user's own
+     * text already ends with — a theme ending in `。` or `!` must not become
+     * `。。`.
+     */
+    function ended(s, mark) {
+      return /[。！？.!?]$/.test(s) ? s : s + (mark || '。')
+    }
+
+    /**
      * Build one copyable prompt.
      *
      * @param style   catalog style entry
@@ -283,16 +293,25 @@ window.__ModuleLoader__.load({
 
       const lines = []
       if (lang === 'zh') {
+        // Field order mirrors the library's own scripts/prompt_style.py, which
+        // the skill contract summarises: style name, theme colour, theme, then
+        // the reference label and the filtered traits.
         lines.push('风格名称：' + style.name + '。')
-        if (style.reference && style.reference !== style.name) {
-          lines.push('参考作者/风格名称：' + style.reference + '。')
-        }
         if (color && color.name_zh) {
           lines.push('主题色：' + color.name_zh + (color.name_en ? '（' + color.name_en + '）' : '') + '。')
         }
+        // A layout owns its own order — its prompt file verbatim, then the
+        // theme appended as the only source of subject matter — so the theme
+        // clause drops below the layout text in that mode.
+        if (!layout) lines.push('主题：' + ended(text || THEME_PLACEHOLDER_ZH))
+        if (style.reference && style.reference !== style.name) {
+          lines.push('参考作者/风格名称：' + style.reference + '。')
+        }
         if (act.useTraits) lines.push('核心风格特征：' + act.traits + '。')
-        if (layout) lines.push(layout.prompt_zh)
-        lines.push('主题：' + (text || THEME_PLACEHOLDER_ZH))
+        if (layout) {
+          lines.push(layout.prompt_zh)
+          lines.push('主题：' + ended(text || THEME_PLACEHOLDER_ZH))
+        }
         if (graphic) lines.push(GRAPHIC_TEXT_SUFFIX)
         // Never a path inside a layout prompt; the reference is shown beside
         // the prompt in that mode instead.
@@ -302,15 +321,18 @@ window.__ModuleLoader__.load({
         }
       } else {
         lines.push('Style name: ' + style.name + '.')
-        if (style.reference && style.reference !== style.name) {
-          lines.push('Reference author/style name: ' + style.reference + '.')
-        }
         if (color && color.name_en) {
           lines.push('Theme color: ' + color.name_en + '.')
         }
+        if (!layout) lines.push('Theme: ' + ended(text || THEME_PLACEHOLDER_EN, '.'))
+        if (style.reference && style.reference !== style.name) {
+          lines.push('Reference author/style name: ' + style.reference + '.')
+        }
         if (act.useTraits) lines.push('Core style traits: ' + act.traits + '.')
-        if (layout) lines.push(layout.prompt_en || layout.prompt_zh)
-        lines.push('Theme: ' + (text || THEME_PLACEHOLDER_EN))
+        if (layout) {
+          lines.push(layout.prompt_en || layout.prompt_zh)
+          lines.push('Theme: ' + ended(text || THEME_PLACEHOLDER_EN, '.'))
+        }
         // The contract keeps the Chinese suffix verbatim in both languages.
         if (graphic) lines.push(GRAPHIC_TEXT_SUFFIX)
         if (act.useReference && !layoutMode) {
@@ -324,13 +346,14 @@ window.__ModuleLoader__.load({
 
     /** A layout's own prompt, standalone (no style stitched on). */
     function layoutPrompt(layout, theme, lang) {
+      const isEn = lang === 'en'
       const text = (theme || '').trim()
       const graphic = layout.category !== 'ecommerce'
-      const lines = lang === 'en'
+      const lines = isEn
         ? [layout.prompt_en || layout.prompt_zh]
         : [layout.prompt_zh]
-      lines.push((lang === 'en' ? 'Theme: ' : '主题：') +
-        (text || (lang === 'en' ? THEME_PLACEHOLDER_EN : THEME_PLACEHOLDER_ZH)))
+      lines.push((isEn ? 'Theme: ' : '主题：') +
+        ended(text || (isEn ? THEME_PLACEHOLDER_EN : THEME_PLACEHOLDER_ZH), isEn ? '.' : '。'))
       if (graphic) lines.push(GRAPHIC_TEXT_SUFFIX)
       return lines.join('\n')
     }
