@@ -449,6 +449,43 @@ ok('a theme that already ends in a stop is not doubled',
 ok('the English prompt closes the theme with an ASCII full stop',
   I.stylePrompt(fa001, 'a cat', null, { catalog: cat, lang: 'en' }).indexOf('Theme: a cat.') !== -1)
 
+/* ---- the composer bridge ----------------------------------------------- *
+ * The gallery sits in a root-scoped settings section, so the framework never
+ * hands it `inputActions` — `insertDraft` is how it reaches the composer the
+ * launcher publishes on `window`. A regression here is invisible to any test
+ * of the prompt text: it shows up as a button that says "filled in" while the
+ * input stays empty, which is exactly what shipped once already. */
+delete global.window.__DSG_INSERT__
+ok('insertDraft reports false when no composer published a bridge',
+  I.insertDraft('x') === false)
+
+let bridged = null
+global.window.__DSG_INSERT__ = (text) => { bridged = text; return true }
+ok('insertDraft hands the text to the bridge and reports true',
+  I.insertDraft('hello') === true && bridged === 'hello', JSON.stringify(bridged))
+
+global.window.__DSG_INSERT__ = () => false
+ok('insertDraft reports false when the bridge refuses the write',
+  I.insertDraft('hello') === false)
+
+global.window.__DSG_INSERT__ = () => { throw new Error('boom') }
+ok('insertDraft swallows a throwing bridge instead of breaking the click',
+  I.insertDraft('hello') === false)
+
+global.window.__DSG_INSERT__ = 'not a function'
+ok('insertDraft ignores a non-function bridge', I.insertDraft('hello') === false)
+delete global.window.__DSG_INSERT__
+
+// The original defect was a `window.__DSG_INSERT__` that every caller *read*
+// and nothing ever *assigned*. Reading alone is not a bridge.
+ok('client.js actually publishes the bridge, not merely reads it',
+  /window\.__DSG_INSERT__\s*=/.test(clientSrc), 'assignment present in client.js')
+
+// A "Use it" button that only reached the clipboard must not reuse the
+// filled-in wording; it needs its own honest label.
+ok('a clipboard-only send has its own label, distinct from the filled-in one',
+  /sentClip:/.test(clientSrc) && /CLIP_SUFFIX/.test(clientSrc), 'sentClip + CLIP_SUFFIX present')
+
 /* layouts: graphic-text mode stacks the layout prompt and the fixed suffix */
 const layout = cat.layouts.filter((x) => x.category === 'social-card')[0]
 const pLayout = I.stylePrompt(fa001, '主题', null, { catalog: cat, lang: 'zh', layout })

@@ -277,6 +277,92 @@ function connect(wsUrl) {
   ok('theme-colour chip labels clear WCAG AA (>= 4.5:1)', sw.minContrast >= 4.5,
     sw.minContrast + ':1  worst=' + sw.worst)
 
+  /* ---- the theme box: a 4-row textarea, not a 240px-tall input ---------- *
+   * `.dsg-input` carries `flex:1 1 240px`. That is right inside a row, but
+   * `.dsg-field` is a column — so the basis landed on the *height* and blew
+   * the box up. Assert the tag, the row count and the rendered height; a
+   * class-only assertion would not have caught the visual result. */
+  await cdp.send('Runtime.evaluate', { expression: `(() => {
+    const t = document.querySelector('.dsg-thumb'); if (t) t.click(); return !!t;
+  })()` })
+  await sleep(600)
+
+  const theme = JSON.parse((await cdp.send('Runtime.evaluate', {
+    expression: `(() => {
+      const el = document.querySelector('.dsg-wrap .dsg-theme');
+      if (!el) return JSON.stringify({ found: false });
+      const r = el.getBoundingClientRect();
+      return JSON.stringify({
+        found: true, tag: el.tagName, rows: el.rows,
+        h: Math.round(r.height), cls: el.className,
+        resize: getComputedStyle(el).resize,
+      });
+    })()`, returnByValue: true })).result.value)
+  ok('the theme box is a textarea with rows=4',
+    theme.found && theme.tag === 'TEXTAREA' && theme.rows === 4, JSON.stringify(theme))
+  ok('the theme box is no longer inflated by the .dsg-input flex basis',
+    theme.found && theme.cls.indexOf('dsg-input') === -1 && theme.h < 160, theme.h + 'px tall')
+  ok('the theme box can be dragged taller', theme.found && theme.resize === 'vertical', theme.resize)
+
+  /* ---- "Use it" must actually reach the composer ------------------------ *
+   * The gallery is root-scoped and never receives `inputActions`; it writes
+   * the draft through the bridge the launcher publishes on `window`. This is
+   * the end-to-end proof. The defect it guards against was a button reading
+   * "filled in" over an empty input, because nothing ever *assigned*
+   * `window.__DSG_INSERT__` — every caller only ever read it. */
+  const bridgeType = (await cdp.send('Runtime.evaluate', {
+    expression: `typeof window.__DSG_INSERT__`, returnByValue: true })).result.value
+  ok('the composer launcher publishes the bridge', bridgeType === 'function', bridgeType)
+
+  const useLabel = `(() => {
+    const b = document.querySelectorAll('.dsg-mfoot .dsg-btn');
+    const u = b[b.length - 1];
+    return u ? u.textContent : '';
+  })()`
+  const clickUse = `(() => {
+    const b = document.querySelectorAll('.dsg-mfoot .dsg-btn');
+    const u = b[b.length - 1];
+    if (u) u.click();
+    return !!u;
+  })()`
+
+  await cdp.send('Runtime.evaluate', { expression: `window.__draftSeen = null; true` })
+  await cdp.send('Runtime.evaluate', { expression: clickUse })
+  await sleep(350)
+  const filled = JSON.parse((await cdp.send('Runtime.evaluate', {
+    expression: `JSON.stringify({ draft: window.__draftSeen || '', label: ${useLabel} })`,
+    returnByValue: true })).result.value)
+  ok('"Use it" writes the prompt into the composer draft',
+    /风格名称：/.test(filled.draft), filled.draft.slice(0, 36))
+  ok('the button reports 已填入 only after a real write',
+    /已填入/.test(filled.label), filled.label)
+
+  // With no bridge there is nothing to fill, so the button must fall back to
+  // the clipboard and say *that* rather than claim a write it never made.
+  await cdp.send('Runtime.evaluate', { expression: `(() => {
+    window.__DSG_INSERT_SAVED = window.__DSG_INSERT__;
+    delete window.__DSG_INSERT__;
+    window.__draftSeen = null;
+    return true;
+  })()` })
+  await cdp.send('Runtime.evaluate', { expression: clickUse })
+  await sleep(350)
+  const fallback = JSON.parse((await cdp.send('Runtime.evaluate', {
+    expression: `JSON.stringify({ draft: window.__draftSeen || '', label: ${useLabel} })`,
+    returnByValue: true })).result.value)
+  ok('without a bridge nothing is written to the draft', fallback.draft === '',
+    fallback.draft.slice(0, 30))
+  ok('without a bridge the button says 已复制, never 已填入',
+    /已复制/.test(fallback.label) && !/已填入/.test(fallback.label), fallback.label)
+  await cdp.send('Runtime.evaluate', {
+    expression: `window.__DSG_INSERT__ = window.__DSG_INSERT_SAVED; true` })
+
+  // close the modal so the screenshot still shows the grid
+  await cdp.send('Runtime.evaluate', { expression: `(() => {
+    const m = document.querySelector('.dsg-mask'); if (m) m.click(); return !!m;
+  })()` })
+  await sleep(500)
+
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
   fs.writeFileSync(OUT, Buffer.from(shot.data, 'base64'))
   ok('screenshot written', fs.existsSync(OUT) && fs.statSync(OUT).size > 10000,

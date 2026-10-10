@@ -43,8 +43,11 @@ window.__ModuleLoader__.load({
       copy: '复制提示词',
       copied: '✓ 已复制',
       create: '拿去创作',
-      creating: '已填入',
+      creating: '✓ 已填入',
       created: '✓ 已填入输入框',
+      // Shown instead of `creating` when no composer was reachable, so the
+      // button never claims to have filled an input it could not reach.
+      sentClip: '✓ 已复制',
       detail: '风格详情',
       themePh: '想画什么主题？（可留空）',
       build: '生成提示词',
@@ -97,8 +100,9 @@ window.__ModuleLoader__.load({
       copy: 'Copy prompt',
       copied: '✓ Copied',
       create: 'Use it',
-      creating: 'Filled in',
+      creating: '✓ Filled in',
       created: '✓ Added to input',
+      sentClip: '✓ Copied',
       detail: 'Style detail',
       themePh: 'What do you want to draw? (optional)',
       build: 'Build prompt',
@@ -421,6 +425,30 @@ window.__ModuleLoader__.load({
       return Promise.resolve()
     }
 
+    /** Marks a flash key as "only the clipboard took it", not the draft. */
+    const CLIP_SUFFIX = '#clip'
+
+    /**
+     * Write into the real composer draft, when one is reachable.
+     *
+     * The gallery lives in a root-scoped settings section, and the framework
+     * never hands that scope `inputActions` — on its own it could only ever
+     * copy to the clipboard. The composer launcher (a session-scoped slot) is
+     * the one place that receives the action face, so it publishes it on
+     * `window` while mounted and this is how the gallery's buttons reach it.
+     *
+     * Returns false when no composer is mounted. Callers must then fall back to
+     * the clipboard *and say so* — the whole point of this function existing is
+     * that a button must never claim to have filled an input it never touched.
+     */
+    function insertDraft(text) {
+      try {
+        const api = window.__DSG_INSERT__
+        if (typeof api === 'function' && api(text) === true) return true
+      } catch { /* fall through to the clipboard */ }
+      return false
+    }
+
     /* ------------------------------------------------------------------ *
      * Styles are injected as a <style> node once per mount so the section
      * stays self-contained and never leans on product DOM selectors. All
@@ -435,6 +463,13 @@ window.__ModuleLoader__.load({
       '.dsg-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}',
       '.dsg-input{flex:1 1 240px;min-width:180px;padding:7px 10px;font-size:13px;border-radius:8px;border:1px solid var(--vscode-input-border,rgba(0,0,0,.16));background:var(--vscode-input-background,#fff);color:inherit;outline:none}',
       '.dsg-input:focus{border-color:var(--vscode-focusBorder,#3b82f6)}',
+      // The theme box is a textarea, not a one-line input, and deliberately
+      // does NOT reuse `.dsg-input`. That rule's `flex:1 1 240px` is right for
+      // the search field (which sits in a row), but `.dsg-field` is a column —
+      // so the 240px basis landed on the *height* and inflated the box. Here
+      // `rows={4}` sets the default height and the user drags from there.
+      '.dsg-theme{width:100%;box-sizing:border-box;padding:7px 10px;font-size:13px;font-family:inherit;line-height:1.5;border-radius:8px;border:1px solid var(--vscode-input-border,rgba(0,0,0,.16));background:var(--vscode-input-background,#fff);color:inherit;outline:none;resize:vertical;white-space:pre-wrap}',
+      '.dsg-theme:focus{border-color:var(--vscode-focusBorder,#3b82f6)}',
       '.dsg-chips{display:flex;flex-wrap:wrap;gap:6px}',
       '.dsg-chip{padding:4px 10px;font-size:12px;border-radius:999px;cursor:pointer;user-select:none;border:1px solid var(--vscode-input-border,rgba(0,0,0,.14));background:transparent;color:inherit;line-height:1.6}',
       '.dsg-chip:hover{background:rgba(127,127,127,.12)}',
@@ -699,20 +734,34 @@ window.__ModuleLoader__.load({
       const selectedColor = colorById[colorId] || null
 
       /**
-       * "Use it" from inside the gallery: the gallery lives in a root-scoped
-       * settings section, so it cannot reach the session input machine. It
-       * copies the prompt and says so, and the composer-side launcher (a
-       * session-scoped slot that DOES receive inputActions) handles direct
-       * insertion. Nothing is silently dropped: the clipboard always holds it.
+       * Build the prompt for a style/layout pair under the current controls.
        *
        * Declared here, above the early returns: a hook below them would change
        * the hook count the moment the catalog finishes loading (React #310).
        */
-      const emit = React.useCallback((style, layout, key, flash) => {
-        const text = stylePrompt(style, themeText, selectedColor, { catalog, lang, layout })
+      const promptFor = React.useCallback(
+        (style, layout) => stylePrompt(style, themeText, selectedColor, { catalog, lang, layout }),
+        [catalog, lang, selectedColor, themeText])
+
+      /**
+       * Route a finished prompt to wherever it can actually go: the composer
+       * draft when the launcher has published its action face, the clipboard
+       * otherwise. The flash key records which of the two happened (see
+       * `CLIP_SUFFIX`) so the button can report it honestly instead of always
+       * claiming the input was filled.
+       */
+      const send = React.useCallback((text, id) => {
+        if (insertDraft(text)) { flashSent(id); return }
         copyText(text)
-        flash(key)
-      }, [catalog, lang, selectedColor, themeText])
+        flashSent(id + CLIP_SUFFIX)
+      }, [flashSent])
+
+      /** Label for a "Use it" button, given what its last click actually did. */
+      const sentLabel = (id) => {
+        if (sentKey === id) return t('creating')
+        if (sentKey === id + CLIP_SUFFIX) return t('sentClip')
+        return t('create')
+      }
 
       if (error) {
         return h('div', { className: 'dsg-wrap' },
@@ -819,12 +868,12 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'dsg-acts' },
                     h('button', {
                       className: 'dsg-btn grow' + (copiedKey === s.number ? ' ok' : ''),
-                      onClick: () => emit(s, null, s.number, flashCopied),
+                      onClick: () => { copyText(promptFor(s, null)); flashCopied(s.number) },
                     }, copiedKey === s.number ? t('copied') : t('copy')),
                     h('button', {
                       className: 'dsg-btn pri grow',
-                      onClick: () => emit(s, null, s.number, flashSent),
-                    }, sentKey === s.number ? t('creating') : t('create')),
+                      onClick: () => send(promptFor(s, null), s.number),
+                    }, sentLabel(s.number)),
                   ),
                 )
               }),
@@ -992,8 +1041,9 @@ window.__ModuleLoader__.load({
                 ),
                 h('div', { className: 'dsg-field' },
                   h('span', { className: 'dsg-lab' }, t('themePh')),
-                  h('input', {
-                    className: 'dsg-input',
+                  h('textarea', {
+                    className: 'dsg-theme',
+                    rows: 4,
                     value: themeText,
                     placeholder: t('themePh'),
                     onChange: (e) => setThemeText(e.target.value),
@@ -1011,18 +1061,8 @@ window.__ModuleLoader__.load({
                 }, copiedKey === 'modal' ? t('copied') : t('copy')),
                 h('button', {
                   className: 'dsg-btn grow',
-                  onClick: () => {
-                    copyText(prompt)
-                    // The settings section cannot reach the session input
-                    // machine; the composer launcher owns that. Clipboard
-                    // holds the text either way.
-                    try {
-                      const api = window.__DSG_INSERT__
-                      if (api && typeof api === 'function') api(prompt)
-                    } catch { /* clipboard already holds it */ }
-                    flashSent('modal')
-                  },
-                }, sentKey === 'modal' ? t('creating') : t('create')),
+                  onClick: () => send(prompt, 'modal'),
+                }, sentLabel('modal')),
               ),
             ),
           )
@@ -1094,8 +1134,9 @@ window.__ModuleLoader__.load({
               ),
               h('div', { className: 'dsg-field' },
                 h('span', { className: 'dsg-lab' }, t('themePh')),
-                h('input', {
-                  className: 'dsg-input',
+                h('textarea', {
+                  className: 'dsg-theme',
+                  rows: 4,
                   value: themeText,
                   placeholder: t('themePh'),
                   onChange: (e) => setThemeText(e.target.value),
@@ -1113,15 +1154,8 @@ window.__ModuleLoader__.load({
               }, copiedKey === 'modal' ? t('copied') : t('copy')),
               h('button', {
                 className: 'dsg-btn grow',
-                onClick: () => {
-                  copyText(prompt)
-                  try {
-                    const api = window.__DSG_INSERT__
-                    if (api && typeof api === 'function') api(prompt)
-                  } catch { /* clipboard already holds it */ }
-                  flashSent('modal')
-                },
-              }, sentKey === 'modal' ? t('creating') : t('create')),
+                onClick: () => send(prompt, 'modal'),
+              }, sentLabel('modal')),
             ),
           ),
         )
@@ -1190,6 +1224,28 @@ window.__ModuleLoader__.load({
       const [q, setQ] = React.useState('')
       const [done, setDone] = React.useState('')
 
+      // This slot is session-scoped, so it is the one place the framework hands
+      // us `inputActions`. Publish that action face on `window` while mounted —
+      // the gallery lives in a root-scoped settings section and would otherwise
+      // have no way to fill the composer draft. A ref keeps the bridge reading
+      // the latest actions without re-running the effect on every render.
+      const actionsRef = React.useRef(actions)
+      actionsRef.current = actions
+      React.useEffect(() => {
+        const bridge = (text) => {
+          const a = actionsRef.current
+          if (!a || typeof a.setDraft !== 'function') return false
+          try { a.setDraft(text) } catch { return false }
+          return true
+        }
+        const prev = window.__DSG_INSERT__
+        window.__DSG_INSERT__ = bridge
+        return () => {
+          // Only retract our own bridge — a remount may already have replaced it.
+          if (window.__DSG_INSERT__ === bridge) window.__DSG_INSERT__ = prev
+        }
+      }, [])
+
       React.useEffect(() => {
         if (!open || catalog) return
         fetch(API + '/catalog.json')
@@ -1208,7 +1264,13 @@ window.__ModuleLoader__.load({
         return list.slice(0, 120)
       }, [catalog, q])
 
-      /** Write the prompt into the real composer draft via the public action face. */
+      /**
+       * Fill the composer draft; fall back to the clipboard when we cannot.
+       *
+       * Deliberately uses our own `actions` rather than `insertDraft`: this
+       * launcher *is* the bridge's publisher, so routing through `window` would
+       * only work once our own effect had run.
+       */
       const use = (style) => {
         const text = stylePrompt(style, '', null, { catalog, lang: 'zh' })
         let wrote = false
@@ -1217,9 +1279,9 @@ window.__ModuleLoader__.load({
             actions.setDraft(text)
             wrote = true
           }
-        } catch { /* fall back below */ }
+        } catch { /* fall back to the clipboard */ }
         if (!wrote) copyText(text)
-        setDone(style.number)
+        setDone(wrote ? style.number : style.number + CLIP_SUFFIX)
         setOpen(false)
         const id = setTimeout(() => setDone(''), 1500)
         void id
@@ -1257,7 +1319,7 @@ window.__ModuleLoader__.load({
           className: 'dsg-launch' + (open || done ? ' on' : ''),
           onClick: () => setOpen((v) => !v),
           title: t('subtitle'),
-        }, done ? t('created') : t('nav')),
+        }, done ? (done.indexOf(CLIP_SUFFIX) !== -1 ? t('sentClip') : t('created')) : t('nav')),
         panel,
       )
     }
@@ -1294,6 +1356,6 @@ window.__ModuleLoader__.load({
       // Exposed for the dev harness only. The prompt contract is the part of
       // this plugin most worth asserting, and these are pure functions, so
       // there is no reason to hide them behind a render.
-      __internals: { stylePrompt, layoutPrompt, filterTraits, resolveActivation, referenceFile },
+      __internals: { stylePrompt, layoutPrompt, filterTraits, resolveActivation, referenceFile, insertDraft },
     }  },
 })
