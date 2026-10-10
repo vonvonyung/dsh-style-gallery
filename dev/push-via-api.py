@@ -79,6 +79,15 @@ def token_from_git_credential() -> str:
 # --------------------------------------------------------------------------
 # http
 # --------------------------------------------------------------------------
+class ApiError(RuntimeError):
+    """A non-retryable HTTP error from the API."""
+
+    def __init__(self, code: int, method: str, path: str, detail: str):
+        super().__init__(f"HTTP {code} on {method} {path}\n{detail}")
+        self.code = code
+        self.detail = detail
+
+
 def api(method: str, path: str, payload: dict | None = None, token: str = "") -> dict:
     url = API + path
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -98,7 +107,7 @@ def api(method: str, path: str, payload: dict | None = None, token: str = "") ->
             detail = e.read().decode("utf-8", "replace")[:400]
             # 4xx other than 429/5xx are our fault; retrying will not help.
             if e.code < 500 and e.code != 429:
-                raise SystemExit(f"HTTP {e.code} on {method} {path}\n{detail}")
+                raise ApiError(e.code, method, path, detail) from None
             last = f"HTTP {e.code}: {detail}"
         except Exception as e:  # noqa: BLE001 - proxy resets show up as many types
             last = f"{type(e).__name__}: {e}"
@@ -106,6 +115,42 @@ def api(method: str, path: str, payload: dict | None = None, token: str = "") ->
             print(f"    retry {attempt}/{RETRIES - 1} after {last}", file=sys.stderr)
             time.sleep(RETRY_WAIT * attempt)
     raise SystemExit(f"gave up on {method} {path}: {last}")
+
+
+def create_tree(repo: str, base_tree: str, entries: list[dict], token: str,
+                chunk: int = 120) -> str:
+    """Create a tree, splitting the entry list if the API rejects it.
+
+    Reorganising `assets/` into five per-kind directories produces a ~900-entry
+    diff, and the API answers that with::
+
+        422 Sorry, your request timed out. It's likely that your input was too
+        large to process. Consider building the tree incrementally…
+
+    So build it incrementally: each call's result becomes the next call's
+    `base_tree`. Trees are content-addressed, so the last one is the tree we
+    wanted, and the intermediate ones are simply unreferenced.
+    """
+    if len(entries) <= chunk:
+        return api("POST", f"/repos/{repo}/git/trees",
+                   {"base_tree": base_tree, "tree": entries}, token=token)["sha"]
+
+    current = base_tree
+    i = 0
+    while i < len(entries):
+        part = entries[i:i + chunk]
+        try:
+            current = api("POST", f"/repos/{repo}/git/trees",
+                          {"base_tree": current, "tree": part}, token=token)["sha"]
+        except ApiError as e:
+            if e.code != 422 or chunk <= 10:
+                raise
+            # Too big even at this chunk size — halve and retry this slice.
+            chunk = max(10, chunk // 2)
+            print(f"    422 on a {len(part)}-entry chunk; retrying at {chunk}")
+            continue
+        i += len(part)
+    return current
 
 
 # --------------------------------------------------------------------------
@@ -174,11 +219,22 @@ def changed_entries(parent: str | None, commit: str) -> list[dict]:
     return entries
 
 
-def commit_meta(sha: str) -> dict:
+def raw_commit(sha: str) -> tuple[str, str]:
+    """`(header, body)` — body is the message exactly as git stored it.
+
+    Keep the trailing newline: git's commit object always ends the message with
+    one, and the API stores whatever it is given verbatim, so stripping it here
+    is what makes the rebuilt SHA differ.
+    """
     raw = git("cat-file", "-p", sha)
-    head, _, body = raw.partition("\n\n")
-    out = {"message": body.rstrip("\n"), "tree": "", "parents": []}
-    for line in head.splitlines():
+    header, _, body = raw.partition("\n\n")
+    return header, body
+
+
+def commit_meta(sha: str) -> dict:
+    header, body = raw_commit(sha)
+    out = {"message": body, "tree": "", "parents": []}
+    for line in header.splitlines():
         if line.startswith("tree "):
             out["tree"] = line[5:]
         elif line.startswith("parent "):
@@ -308,15 +364,14 @@ def main() -> int:
     for sha in todo:
         meta = commit_meta(sha)
         entries = changed_entries(meta["parents"][0] if meta["parents"] else None, sha)
-        tree = api("POST", f"/repos/{args.repo}/git/trees",
-                   {"base_tree": parent_tree, "tree": entries}, token=token)
-        if tree["sha"] != meta["tree"]:
+        tree_sha = create_tree(args.repo, parent_tree, entries, token)
+        if tree_sha != meta["tree"]:
             raise SystemExit(
-                f"tree sha mismatch for {sha[:8]}: built {tree['sha'][:8]}, "
+                f"tree sha mismatch for {sha[:8]}: built {tree_sha[:8]}, "
                 f"local says {meta['tree'][:8]}")
         commit = api("POST", f"/repos/{args.repo}/git/commits", {
             "message": meta["message"],
-            "tree": tree["sha"],
+            "tree": tree_sha,
             "parents": [parent],
             "author": {**meta["author"], "date": iso(meta["author"]["date"])},
             "committer": {**meta["committer"], "date": iso(meta["committer"]["date"])},
@@ -325,7 +380,7 @@ def main() -> int:
             raise SystemExit(
                 f"commit sha mismatch for {sha[:8]}: built {commit['sha'][:8]}")
         print(f"  commit {sha[:8]}  {meta['message'].splitlines()[0][:56]}")
-        parent, parent_tree, new_head = commit["sha"], tree["sha"], commit["sha"]
+        parent, parent_tree, new_head = commit["sha"], tree_sha, commit["sha"]
 
     api("PATCH", f"/repos/{args.repo}/git/refs/heads/{args.branch}",
         {"sha": new_head, "force": False}, token=token)
@@ -335,4 +390,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except ApiError as e:
+        print(f"\n{e}", file=sys.stderr)
+        raise SystemExit(1) from None
