@@ -4,6 +4,9 @@ node_modules/
 # generated preview artifacts from the browser tests
 dev/preview-*.png
 
+# resume state for dev/push-via-api.py (lists blobs already uploaded)
+dev/.push-cache-*.json
+
 # os / editor junk
 .DS_Store
 Thumbs.db

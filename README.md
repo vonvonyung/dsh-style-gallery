@@ -474,3 +474,48 @@ sleep 3
 cd dev && DSG_URL=http://127.0.0.1:3088/ node test-browser.cjs
 kill $SRV
 ```
+
+## 在出口封了 `github.com` 的环境里推送
+
+某些环境（比如带白名单的出口代理）只放行 `api.github.com`，**封掉 `github.com`**：
+
+```
+$ git push origin main
+fatal: unable to access 'https://github.com/vonvonyung/dsh-style-gallery.git/':
+CONNECT tunnel failed, response 502
+```
+
+`dev/` 下三个脚本处理这种情况，走 Git Data API 而不是 git 传输：
+
+```bash
+PY="C:/Users/19980/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe"
+
+"$PY" dev/normalize-commit-dates.py            # 先看要改什么
+"$PY" dev/normalize-commit-dates.py --apply    # 把日期写成 UTC
+"$PY" dev/push-via-api.py --recon              # 看要传多少对象
+"$PY" dev/push-via-api.py --apply              # 真推
+```
+
+**为什么必须先归一化日期**：GitHub 的 `POST /git/commits` 只接受 ISO 8601，
+**并把日期存成 UTC**，而本地 git 记的是 `<epoch> +0800` —— 同一时刻、不同字节，
+commit SHA 必然不同：
+
+```
+本地: author vonyung <…> 1791177995 +0800
+API : author vonyung <…> 1791177995 +0000
+```
+
+不归一化就推，本地和远程会变成**分叉**（内容一样、SHA 不同），你下次 `git push`
+会被拒为 non-fast-forward，只能 force。归一化只动**尚未推送**的提交，已发布的历史不受影响。
+
+`push-via-api.py` 的几点设计：
+
+- **逐对象校验 SHA**。blob / tree / commit 建出来若与本地不一致就中止 ——
+  这正是发现「日期被归一化」的方式，而不是把错的提交悄悄推上去。
+- **最后才移动 ref**。中途失败时远程分支纹丝不动，只留下一些无引用的 blob（会被 GC）。
+- **只允许快进**。远程不是本地祖先就直接拒绝，force 不该由脚本替你决定。
+- **可续传**。blob 上传记录在 `dev/.push-cache-<branch>.json`（已 gitignore），
+  中断后重跑不重复传。
+
+只诊断不修：`python dev/diagnose-commit-sha.py [commit]` 会把本地对象与 API 建出来的
+对象逐字段摆在一起，直接指出差在哪一项。
