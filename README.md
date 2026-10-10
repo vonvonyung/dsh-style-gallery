@@ -64,14 +64,14 @@ error: profile "desktop" is managed exclusively by the Electron application
 ```bash
 cd dsh-style-gallery
 npm pack --pack-destination ..
-# → dsh-style-gallery-1.0.1.tgz（52.6MB / 602 个文件）
+# → dsh-style-gallery-1.0.2.tgz（52.6MB / 602 个文件）
 ```
 
 然后在 DSH 里：
 
 1. 侧边栏 → **插件**
 2. 点 **添加插件**
-3. 粘贴 tgz 的**绝对路径**，例如 `C:\Users\you\dsh-style-gallery-1.0.1.tgz`
+3. 粘贴 tgz 的**绝对路径**，例如 `C:\Users\you\dsh-style-gallery-1.0.2.tgz`
    （必须是绝对路径 —— 相对路径会被拒，因为 Host 的工作目录对你不透明）
 4. 点 **安装**，装完点 **立即启用**
 5. **完全退出 DSH 再打开**
@@ -269,8 +269,8 @@ dsh-style-gallery/
 两种产物，内容相同，用途不同：
 
 ```bash
-python dev/pack.py                 # → ../dsh-style-gallery-1.0.1.zip   给人手动拷贝
-npm pack --pack-destination ..     # → ../dsh-style-gallery-1.0.1.tgz   给 DSH 界面安装
+python dev/pack.py                 # → ../dsh-style-gallery-1.0.2.zip   给人手动拷贝
+npm pack --pack-destination ..     # → ../dsh-style-gallery-1.0.2.tgz   给 DSH 界面安装
 ```
 
 **zip 是给人看的，tgz 是给 DSH 装的** —— DSH 的插件页只接受 `.tgz` / `.tar.gz`，
